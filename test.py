@@ -1,5 +1,6 @@
 import argparse
 import os
+from PIL import Image
 
 import yaml
 import torch
@@ -68,11 +69,21 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None,
 
     for batch in pbar:
         for k, v in batch.items():
-            batch[k] = v.cuda()
+            if k != 'name':
+                batch[k] = v.cuda()
+            else:
+                batch[k] = v
 
         inp = batch['inp']
-
+        filename = batch['name'][0].split('/')[-1]
+        # with torch.autocast(device_type="cuda"):
         pred = torch.sigmoid(model.infer(inp))
+        filename = batch['name'][0].split('/')[-1]
+        pred_mask = tensor2PIL(pred[0].cpu())
+        pred_mask = pred_mask.resize((640, 480), resample=Image.NEAREST)
+        # change to binary mask threshold 125
+        pred_mask = pred_mask.point(lambda p: p > 125 and 255)  # use 125 as threshold
+        pred_mask.save(f'./results/ISTD_Dataset/train/{filename}')
 
         result1, result2, result3, result4 = metric_fn(pred, batch['gt'])
         val_metric1.add(result1.item(), inp.shape[0])
@@ -86,6 +97,8 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None,
             pbar.set_description('val {} {:.4f}'.format(metric3, val_metric3.item()))
             pbar.set_description('val {} {:.4f}'.format(metric4, val_metric4.item()))
 
+
+
     return val_metric1.item(), val_metric2.item(), val_metric3.item(), val_metric4.item()
 
 
@@ -98,14 +111,13 @@ if __name__ == '__main__':
 
     with open(args.config, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-    spec = config['test_dataset']
+    spec = config['val_dataset']
     dataset = datasets.make(spec['dataset'])
     dataset = datasets.make(spec['wrapper'], args={'dataset': dataset})
-    loader = DataLoader(dataset, batch_size=spec['batch_size'],
-                        num_workers=8)
+    loader = DataLoader(dataset, batch_size=spec['batch_size'], num_workers=8)
 
     model = models.make(config['model']).cuda()
-    sam_checkpoint = torch.load(args.model, map_location='cuda:0')
+    sam_checkpoint = torch.load(args.model, map_location='cpu')
     model.load_state_dict(sam_checkpoint, strict=True)
     
     metric1, metric2, metric3, metric4 = eval_psnr(loader, model,

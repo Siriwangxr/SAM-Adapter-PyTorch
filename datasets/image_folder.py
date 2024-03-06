@@ -64,7 +64,7 @@ class ImageFolder(Dataset):
         x = self.files[idx % len(self.files)]
 
         if self.cache == 'none':
-            return self.img_process(x)
+            return self.img_process(x), x
         elif self.cache == 'in_memory':
             return x
 
@@ -85,4 +85,6 @@ class PairedImageFolders(Dataset):
         return len(self.dataset_1)
 
     def __getitem__(self, idx):
-        return self.dataset_1[idx], self.dataset_2[idx]
+        img, filename = self.dataset_1[idx]
+        mask, _ = self.dataset_2[idx]
+        return self.dataset_1[idx], self.dataset_2[idx], filename

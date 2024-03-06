@@ -50,11 +50,13 @@ class ValDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        img, mask = self.dataset[idx]
-
+        _img, _mask, _ = self.dataset[idx]
+        img, add_filename = _img
+        mask, _ = _mask
         return {
             'inp': self.img_transform(img),
-            'gt': self.mask_transform(mask)
+            'gt': self.mask_transform(mask),
+            'name': add_filename
         }
 
 
