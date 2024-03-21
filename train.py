@@ -13,26 +13,33 @@ from statistics import mean
 import torch
 import torch.distributed as dist
 
-torch.distributed.init_process_group(backend='nccl')
-local_rank = torch.distributed.get_rank()
-torch.cuda.set_device(local_rank)
-device = torch.device("cuda", local_rank)
+# torch.distributed.init_process_group(backend='nccl')
+# local_rank = torch.distributed.get_rank()
+# torch.cuda.set_device(local_rank)
+# device = torch.device("cuda", local_rank)
+device = torch.device("cuda")
 
 
 def make_data_loader(spec, tag=''):
     if spec is None:
         return None
+    local_rank = 0
 
     dataset = datasets.make(spec['dataset'])
     dataset = datasets.make(spec['wrapper'], args={'dataset': dataset})
     if local_rank == 0:
         log('{} dataset: size={}'.format(tag, len(dataset)))
         for k, v in dataset[0].items():
-            log('  {}: shape={}'.format(k, tuple(v.shape)))
+            if k == 'name':
+                continue
+            else:
+                log('  {}: shape={}'.format(k, tuple(v.shape)))
 
-    sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+    # sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+    # loader = DataLoader(dataset, batch_size=spec['batch_size'],
+    #     shuffle=False, num_workers=8, pin_memory=True, sampler=sampler)
     loader = DataLoader(dataset, batch_size=spec['batch_size'],
-        shuffle=False, num_workers=8, pin_memory=True, sampler=sampler)
+        shuffle=False, num_workers=8, pin_memory=True)
     return loader
 
 
@@ -106,6 +113,7 @@ def prepare_training():
         epoch_start = 1
     max_epoch = config.get('epoch_max')
     lr_scheduler = CosineAnnealingLR(optimizer, max_epoch, eta_min=config.get('lr_min'))
+    local_rank = 0
     if local_rank == 0:
         log('model: #params={}'.format(utils.compute_num_params(model, text=True)))
     return model, optimizer, epoch_start, lr_scheduler
@@ -114,10 +122,11 @@ def prepare_training():
 def train(train_loader, model):
     model.train()
 
-    if local_rank == 0:
-        pbar = tqdm(total=len(train_loader), leave=False, desc='train')
-    else:
-        pbar = None
+    # if local_rank == 0:
+    #     pbar = tqdm(total=len(train_loader), leave=False, desc='train')
+    # else:
+    #     pbar = None
+    pbar = tqdm(total=len(train_loader), leave=False, desc='train')
 
     loss_list = []
     for batch in train_loader:
@@ -127,14 +136,15 @@ def train(train_loader, model):
         gt = batch['gt']
         model.set_input(inp, gt)
         model.optimize_parameters()
-        batch_loss = [torch.zeros_like(model.loss_G) for _ in range(dist.get_world_size())]
-        dist.all_gather(batch_loss, model.loss_G)
-        loss_list.extend(batch_loss)
-        if pbar is not None:
-            pbar.update(1)
+        loss_list.append(model.loss_G.item())
+        # batch_loss = [torch.zeros_like(model.loss_G) for _ in range(dist.get_world_size())]
+        # dist.all_gather(batch_loss, model.loss_G)
+        # loss_list.extend(batch_loss)
+        # if pbar is not None:
+        pbar.update(1)
 
-    if pbar is not None:
-        pbar.close()
+    # if pbar is not None:
+    pbar.close()
 
     loss = [i.item() for i in loss_list]
     return mean(loss)
@@ -159,14 +169,14 @@ def main(config_, save_path, args):
     lr_scheduler = CosineAnnealingLR(model.optimizer, config['epoch_max'], eta_min=config.get('lr_min'))
 
     model = model.cuda()
-    model = torch.nn.parallel.DistributedDataParallel(
-        model,
-        device_ids=[args.local_rank],
-        output_device=args.local_rank,
-        find_unused_parameters=True,
-        broadcast_buffers=False
-    )
-    model = model.module
+    # model = torch.nn.parallel.DistributedDataParallel(
+    #     model,
+    #     device_ids=[args.local_rank],
+    #     output_device=args.local_rank,
+    #     find_unused_parameters=True,
+    #     broadcast_buffers=False
+    # )
+    # model = model.module
 
     sam_checkpoint = torch.load(config['sam_checkpoint'])
     model.load_state_dict(sam_checkpoint, strict=False)
@@ -174,6 +184,7 @@ def main(config_, save_path, args):
     for name, para in model.named_parameters():
         if "image_encoder" in name and "prompt_generator" not in name:
             para.requires_grad_(False)
+    local_rank = 0
     if local_rank == 0:
         model_total_params = sum(p.numel() for p in model.parameters())
         model_grad_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -184,7 +195,7 @@ def main(config_, save_path, args):
     max_val_v = -1e18 if config['eval_type'] != 'ber' else 1e8
     timer = utils.Timer()
     for epoch in range(epoch_start, epoch_max + 1):
-        train_loader.sampler.set_epoch(epoch)
+        # train_loader.sampler.set_epoch(epoch)
         t_epoch_start = timer.t()
         train_loss_G = train(train_loader, model)
         lr_scheduler.step()
@@ -250,7 +261,7 @@ def save(config, model, save_path, name):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default="configs/train/setr/train_setr_evp_cod.yaml")
+    parser.add_argument('--config', default="checkpoints/best_results/istd/config.yaml")
     parser.add_argument('--name', default=None)
     parser.add_argument('--tag', default=None)
     parser.add_argument("--local_rank", type=int, default=-1, help="")
@@ -258,8 +269,9 @@ if __name__ == '__main__':
 
     with open(args.config, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-        if local_rank == 0:
-            print('config loaded.')
+        # if local_rank == 0:
+        #     print('config loaded.')
+        print('config loaded.')
 
     save_name = args.name
     if save_name is None:

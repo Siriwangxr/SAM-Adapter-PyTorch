@@ -1,5 +1,6 @@
 import argparse
 import os
+import numpy as np
 from PIL import Image
 
 import yaml
@@ -79,11 +80,17 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None,
         # with torch.autocast(device_type="cuda"):
         pred = torch.sigmoid(model.infer(inp))
         filename = batch['name'][0].split('/')[-1]
+        filename = filename.split('.')[0] + '.png'
         pred_mask = tensor2PIL(pred[0].cpu())
-        pred_mask = pred_mask.resize((640, 480), resample=Image.NEAREST)
+        pred_mask = pred_mask.resize((840, 640), resample=Image.NEAREST) # SRD_Dataset size
         # change to binary mask threshold 125
-        pred_mask = pred_mask.point(lambda p: p > 125 and 255)  # use 125 as threshold
-        pred_mask.save(f'./results/ISTD_Dataset/train/{filename}')
+        pred_mask = pred_mask.point(lambda p: 255 if p > 125 else 0)  # use 125 as threshold
+        # image_array = np.array(pred_mask)
+        # Check if all elements are either 0 or 1
+        # is_binary = np.all(np.isin(image_array, [0, 255]))
+        # print(is_binary)
+
+        pred_mask.save(f'./results/SRD_Dataset/test/{filename}')
 
         result1, result2, result3, result4 = metric_fn(pred, batch['gt'])
         val_metric1.add(result1.item(), inp.shape[0])
@@ -99,7 +106,8 @@ def eval_psnr(loader, model, data_norm=None, eval_type=None, eval_bsize=None,
 
 
 
-    return val_metric1.item(), val_metric2.item(), val_metric3.item(), val_metric4.item()
+    # return val_metric1.item(), val_metric2.item(), val_metric3.item(), val_metric4.item()
+
 
 
 if __name__ == '__main__':
@@ -119,13 +127,16 @@ if __name__ == '__main__':
     model = models.make(config['model']).cuda()
     sam_checkpoint = torch.load(args.model, map_location='cpu')
     model.load_state_dict(sam_checkpoint, strict=True)
-    
-    metric1, metric2, metric3, metric4 = eval_psnr(loader, model,
-                                                   data_norm=config.get('data_norm'),
-                                                   eval_type=config.get('eval_type'),
-                                                   eval_bsize=config.get('eval_bsize'),
+
+    eval_psnr(loader, model, data_norm=config.get('data_norm'), eval_type=config.get('eval_type'), eval_bsize=config.get('eval_bsize'),
                                                    verbose=True)
-    print('metric1: {:.4f}'.format(metric1))
-    print('metric2: {:.4f}'.format(metric2))
-    print('metric3: {:.4f}'.format(metric3))
-    print('metric4: {:.4f}'.format(metric4))
+    
+    # metric1, metric2, metric3, metric4 = eval_psnr(loader, model,
+    #                                                data_norm=config.get('data_norm'),
+    #                                                eval_type=config.get('eval_type'),
+    #                                                eval_bsize=config.get('eval_bsize'),
+    #                                                verbose=True)
+    # print('metric1: {:.4f}'.format(metric1))
+    # print('metric2: {:.4f}'.format(metric2))
+    # print('metric3: {:.4f}'.format(metric3))
+    # print('metric4: {:.4f}'.format(metric4))

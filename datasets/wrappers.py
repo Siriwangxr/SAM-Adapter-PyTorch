@@ -94,7 +94,10 @@ class TrainDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        img, mask = self.dataset[idx]
+        # img, mask = self.dataset[idx]
+        _img, _mask, _ = self.dataset[idx]
+        img, add_filename = _img
+        mask, _ = _mask
 
         # random filp
         if random.random() < 0.5:
@@ -107,4 +110,6 @@ class TrainDataset(Dataset):
         return {
             'inp': self.img_transform(img),
             'gt': self.mask_transform(mask)
+            # 'name': add_filename
         }
+
